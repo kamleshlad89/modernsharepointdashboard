@@ -144,6 +144,7 @@ const DraggableCard: React.FC<{
         checked={card.selected}
         onChange={(ev, checked) => handleCheckboxChange(checked || false)}
         disabled={card.fixed || (!card.selected && maxSelectionReached)}
+        title={card.fixed ? "This card is fixed and cannot be deselected" : undefined}
       />
       <span style={{ color: card.fixed ? '#a19f9d' : '#323130', paddingRight: card.fixed ? '20px' : '0' }}>
         {card.title} {card.fixed}
@@ -179,8 +180,9 @@ const ModernSharePointDashboard: React.FC<IModernSharePointDashboardProps> = (pr
         return {
           id: item.Id,
           title: item.Title,
-          order: index + 1,
-          visible: index < 4, // First 4 cards visible by default
+          // Fixed cards always use defaultOrder, non-fixed cards start with defaultOrder but can be changed
+          order: isFixed ? item.DefaultOrder || index + 1 : item.DefaultOrder || index + 1,
+          visible: isFixed ? true : index < 4, // Fixed cards are always visible, others default to first 4
           selected: isFixed ? true : index < 4, // Fixed cards are always selected, others follow default logic
           fixed: isFixed,
           defaultOrder: item.DefaultOrder || index + 1,
@@ -188,7 +190,12 @@ const ModernSharePointDashboard: React.FC<IModernSharePointDashboardProps> = (pr
         };
       });
       
-      setCards(cardsData);
+      // Sort cards by their DefaultOrder for initial display
+      const sortedCards = cardsData.sort((a, b) => a.defaultOrder - b.defaultOrder);
+      
+      // Load user settings and apply them
+      await loadUserSettings(sortedCards);
+      
     } catch (error) {
       console.error('Failed to load cards from SharePoint:', error);
       // Fallback to empty array if SharePoint call fails
@@ -196,32 +203,129 @@ const ModernSharePointDashboard: React.FC<IModernSharePointDashboardProps> = (pr
     }
   };
 
+  const loadUserSettings = async (initialCards: ICard[]): Promise<void> => {
+    try {
+      const currentUser = props.context.pageContext.user;
+      const userPrincipalName = currentUser.loginName;
+      
+      const existingSettingsResponse = await props.context.spHttpClient.get(
+        `${props.context.pageContext.site.absoluteUrl}/_api/web/lists/getbytitle('UserSettingsList')/items?$filter=UserID eq '${userPrincipalName}'&$top=1`,
+        SPHttpClient.configurations.v1
+      );
+
+      if (existingSettingsResponse.ok) {
+        const existingData = await existingSettingsResponse.json();
+        const existingItems = existingData.value || [];
+        
+        if (existingItems.length > 0) {
+          const userSettings = JSON.parse(existingItems[0].PersonalisedCards);
+          console.log('Loading user settings:', userSettings);
+          
+          // Apply user settings to cards
+          const updatedCards = initialCards.map(card => {
+            // Always keep fixed cards with their original settings
+            if (card.fixed) {
+              return {
+                ...card,
+                visible: true, // Fixed cards are always visible
+                selected: true, // Fixed cards are always selected
+                order: card.defaultOrder // Fixed cards always use defaultOrder
+              };
+            }
+            
+            // For non-fixed cards, check if user has customized them
+            const userCardSetting = userSettings.selectedCards?.find((uc: any) => uc.id === card.id);
+            if (userCardSetting) {
+              return {
+                ...card,
+                visible: true,
+                selected: true,
+                order: userCardSetting.order // Use user's custom order
+              };
+            }
+            
+            // If not in user settings, card is not selected
+            return {
+              ...card,
+              visible: false,
+              selected: false
+            };
+          });
+          
+          setCards(updatedCards);
+          return;
+        }
+      }
+    } catch (error) {
+      console.log('No user settings found or error loading them:', error);
+    }
+    
+    // If no user settings found, use initial cards
+    setCards(initialCards);
+  };
+
   useEffect(() => {
     void loadCardsFromSharePoint();
   }, []);
 
   const moveCard = (dragIndex: number, hoverIndex: number): void => {
-    const newCards = [...cards];
-    const dragCard = newCards[dragIndex];
+    const dragCard = cards[dragIndex];
     
-    // Remove the dragged card from its original position
-    newCards.splice(dragIndex, 1);
-    // Insert it at the new position
-    newCards.splice(hoverIndex, 0, dragCard);
+    // Prevent moving fixed cards
+    if (dragCard.fixed) {
+      return;
+    }
     
-    // Update the order property for all cards
-    const updatedCards = newCards.map((card, index) => ({
-      ...card,
-      order: index + 1
-    }));
+    // Get the current sorted order of cards (how they appear in the panel)
+    const sortedCards = [...cards].sort((a, b) => {
+      const aOrder = a.fixed ? a.defaultOrder : a.order;
+      const bOrder = b.fixed ? b.defaultOrder : b.order;
+      return aOrder - bOrder;
+    });
     
-    setCards(updatedCards);
+    // Find the target position in the sorted array
+    const targetCard = sortedCards[hoverIndex];
+    let newOrder: number;
+    
+    if (targetCard) {
+      if (targetCard.fixed) {
+        // If hovering over a fixed card, place before or after it
+        if (dragIndex < hoverIndex) {
+          // Moving down: place after the fixed card
+          newOrder = targetCard.defaultOrder + 0.5;
+        } else {
+          // Moving up: place before the fixed card
+          newOrder = targetCard.defaultOrder - 0.5;
+        }
+      } else {
+        // If hovering over a non-fixed card, take its position
+        newOrder = hoverIndex + 1;
+      }
+    } else {
+      // If hovering at the end
+      newOrder = cards.length + 1;
+    }
+    
+    // Update only the dragged card's order, keep everything else unchanged
+    const newCards = cards.map(card => {
+      if (card.id === dragCard.id) {
+        return { ...card, order: newOrder };
+      }
+      // Keep all other cards (including fixed cards) exactly as they are
+      return card;
+    });
+    
+    setCards(newCards);
   };
 
   const handleSelectionChange = (cardId: number, selected: boolean): void => {
     const newCards = cards.map(card => {
       if (card.id === cardId && !card.fixed) { // Only allow changes for non-fixed cards
         return { ...card, selected };
+      }
+      // Fixed cards always remain selected
+      if (card.fixed) {
+        return { ...card, selected: true };
       }
       return card;
     });
@@ -235,36 +339,54 @@ const ModernSharePointDashboard: React.FC<IModernSharePointDashboardProps> = (pr
   const maxSelectionReached = selectableCount >= maxSelectableCards;
 
   const handleSave = async (): Promise<void> => {
-    // Update visibility based on selection
+    // Update visibility based on selection, but ensure fixed cards are always visible
     const updatedCards = cards.map(card => ({
       ...card,
-      visible: card.selected
+      visible: card.fixed ? true : card.selected // Fixed cards always visible, others based on selection
     }));
     setCards(updatedCards);
 
+    // Validate that we don't exceed the 4-card limit
+    const visibleCards = updatedCards.filter(card => card.visible);
+    const fixedVisibleCards = visibleCards.filter(card => card.fixed);
+    const nonFixedVisibleCards = visibleCards.filter(card => !card.fixed);
+    
+    if (fixedVisibleCards.length + nonFixedVisibleCards.length > 4) {
+      alert(`You can only select ${4 - fixedVisibleCards.length} additional cards because ${fixedVisibleCards.length} card(s) are fixed.`);
+      return;
+    }
+
     try {
-      // Get selected cards in order
+      // Get selected cards in order based on user's arrangement (not defaultOrder)
+      // Fixed cards should always use their defaultOrder, non-fixed cards use current order
       const selectedCards = cards
         .filter(card => card.selected)
-        .sort((a, b) => a.order - b.order)
+        .sort((a, b) => {
+          const aOrder = a.fixed ? a.defaultOrder : a.order;
+          const bOrder = b.fixed ? b.defaultOrder : b.order;
+          return aOrder - bOrder;
+        })
         .map((card, index) => ({
           id: card.id,
           title: card.title,
-          order: index + 1,
-          cardViewJSON: card.cardViewJSON
+          order: card.fixed ? card.defaultOrder : card.order, // Fixed cards use defaultOrder, others use current order
+          originalDefaultOrder: card.defaultOrder, // Keep reference to original order
+          isFixed: card.fixed
         }));
 
       // Create JSON schema with user settings
       const userSettingsJSON = {
         timestamp: new Date().toISOString(),
         selectedCards: selectedCards,
-        totalSelected: selectedCards.length,
-        cardDetails: selectedCards.map(card => ({
+        totalSelected: selectedCards.length
+       /*  cardDetails: selectedCards.map((card, index) => ({
           cardId: card.id,
           cardTitle: card.title,
-          displayOrder: card.order,
-          cardViewJSON: JSON.parse(card.cardViewJSON || '{}')
-        }))
+          userDefinedOrder: card.order, // User's custom order (1, 2, 3, 4)
+          originalDefaultOrder: card.originalDefaultOrder, // Original order from MasterCardList
+          isFixed: card.isFixed,
+          gridPosition: index + 1 // Final position in the grid (1-4)
+        })) */
       };
 
       // Get current user information
@@ -385,16 +507,51 @@ const ModernSharePointDashboard: React.FC<IModernSharePointDashboardProps> = (pr
         </div>
         
         <div className={styles.dashboardGrid}>
-          {cards.filter(card => card.visible).slice(0, 4).map((card) => (
-            <CardComponent
-              key={card.id}
-              cardData={{
-                id: card.id,
-                title: card.title,
-                cardViewJSON: card.cardViewJSON
-              }}
-            />
-          ))}
+          {(() => {
+            // Get all visible cards
+            const visibleCards = cards.filter(card => card.visible);
+            
+            // Separate fixed and non-fixed cards
+            const fixedCards = visibleCards.filter(card => card.fixed);
+            const nonFixedCards = visibleCards.filter(card => !card.fixed);
+            
+            // Sort non-fixed cards by their custom order
+            const sortedNonFixedCards = nonFixedCards.sort((a, b) => a.order - b.order);
+            
+            // Create a 4-slot grid array
+            const gridSlots: (ICard | null)[] = [null, null, null, null];
+            
+            // First, place fixed cards in their designated positions
+            fixedCards.forEach(card => {
+              const slotIndex = card.defaultOrder - 1; // Convert to 0-based index
+              if (slotIndex >= 0 && slotIndex < 4) {
+                gridSlots[slotIndex] = card;
+              }
+            });
+            
+            // Then fill remaining slots with non-fixed cards
+            let nonFixedIndex = 0;
+            for (let i = 0; i < 4 && nonFixedIndex < sortedNonFixedCards.length; i++) {
+              if (gridSlots[i] === null) {
+                gridSlots[i] = sortedNonFixedCards[nonFixedIndex];
+                nonFixedIndex++;
+              }
+            }
+            
+            // Render only the cards that fit in the grid
+            return gridSlots
+              .filter(card => card !== null)
+              .map((card) => (
+                <CardComponent
+                  key={card!.id}
+                  cardData={{
+                    id: card!.id,
+                    title: card!.title,
+                    cardViewJSON: card!.cardViewJSON
+                  }}
+                />
+              ));
+          })()}
         </div>
 
         <Panel
@@ -412,7 +569,14 @@ const ModernSharePointDashboard: React.FC<IModernSharePointDashboardProps> = (pr
               )}
             </div>
             
-            {cards.map((card, index) => (
+            {cards
+              .sort((a, b) => {
+                // Sort cards by their display order (fixed cards use defaultOrder, others use current order)
+                const aOrder = a.fixed ? a.defaultOrder : a.order;
+                const bOrder = b.fixed ? b.defaultOrder : b.order;
+                return aOrder - bOrder;
+              })
+              .map((card, index) => (
               <DraggableCard
                 key={card.id}
                 card={card}
@@ -427,7 +591,7 @@ const ModernSharePointDashboard: React.FC<IModernSharePointDashboardProps> = (pr
               <PrimaryButton
                 text="Save"
                 onClick={handleSave}
-                disabled={selectedCount !== 4}
+                disabled={selectedCount > 4 || selectedCount < fixedCount}
               />
               <DefaultButton
                 text="Cancel"
