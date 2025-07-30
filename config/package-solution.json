@@ -1,0 +1,40 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/spfx-build/package-solution.schema.json",
+  "solution": {
+    "name": "modern-share-point-dashboard-client-side-solution",
+    "id": "0943a45f-84bf-4445-a2d4-b25b09d566e4",
+    "version": "1.0.0.0",
+    "includeClientSideAssets": true,
+    "skipFeatureDeployment": true,
+    "isDomainIsolated": false,
+    "developer": {
+      "name": "",
+      "websiteUrl": "",
+      "privacyUrl": "",
+      "termsOfUseUrl": "",
+      "mpnId": "Undefined-1.21.1"
+    },
+    "metadata": {
+      "shortDescription": {
+        "default": "Modern SharePoint Dashboard description"
+      },
+      "longDescription": {
+        "default": "Modern SharePoint Dashboard description"
+      },
+      "screenshotPaths": [],
+      "videoUrl": "",
+      "categories": []
+    },
+    "features": [
+      {
+        "title": "modern-share-point-dashboard Feature",
+        "description": "The feature that activates elements of the modern-share-point-dashboard solution.",
+        "id": "d88abb37-48a8-4e5a-8be3-e3b33040cc8a",
+        "version": "1.0.0.0"
+      }
+    ]
+  },
+  "paths": {
+    "zippedPackage": "solution/modern-share-point-dashboard.sppkg"
+  }
+}

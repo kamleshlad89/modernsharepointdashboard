@@ -1,0 +1,18 @@
+{
+  "@microsoft/generator-sharepoint": {
+    "plusBeta": false,
+    "isCreatingSolution": true,
+    "nodeVersion": "18.17.1",
+    "sdksVersions": {},
+    "version": "1.21.1",
+    "libraryName": "modern-share-point-dashboard",
+    "libraryId": "0943a45f-84bf-4445-a2d4-b25b09d566e4",
+    "environment": "spo",
+    "packageManager": "npm",
+    "solutionName": "Modern SharePoint Dashboard",
+    "solutionShortDescription": "Modern SharePoint Dashboard description",
+    "skipFeatureDeployment": true,
+    "isDomainIsolated": false,
+    "componentType": "webpart"
+  }
+}

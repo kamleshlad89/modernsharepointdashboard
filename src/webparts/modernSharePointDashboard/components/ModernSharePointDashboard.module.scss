@@ -1,0 +1,71 @@
+@import '~@fluentui/react/dist/sass/References.scss';
+
+.modernSharePointDashboard {
+  overflow: hidden;
+  padding: 1em;
+  color: "[theme:bodyText, default: #323130]";
+  color: var(--bodyText);
+  
+  .headerBar {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 16px;
+  }
+
+  :global(.customizeButton) {
+    margin-left: auto;
+  }
+
+  .dashboardGrid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    grid-template-rows: 1fr; // Single row as per requirements
+    gap: 16px;
+    margin: 0 auto;
+    max-width: 1500px;
+    height: 500px; // Fixed height for the grid
+  }
+
+  .cardContainer {
+    background-color: white;
+    border: 1px solid "[theme:neutralLight, default: #edebe9]";
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+    transition: box-shadow 0.2s ease-in-out;
+    height: 50%; // Take full height of grid cell
+    overflow: hidden; // Prevent overflow from breaking layout
+    display: flex;
+    flex-direction: column;
+
+    &:hover {
+      box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+    }
+
+    h3 {
+      margin: 0 0 8px 0;
+      font-size: 16px;
+      font-weight: 600;
+      color: "[theme:themePrimary, default: #0078d4]";
+    }
+
+    p {
+      margin: 0;
+      font-size: 14px;
+      color: "[theme:bodyText, default: #323130]";
+    }
+  }
+}
+
+.customizePanel {
+  padding: 16px;
+
+  .cardCustomizeItem {
+    margin-bottom: 16px;
+    padding: 8px;
+    border-radius: 2px;
+
+    &:hover {
+      background-color: "[theme:neutralLighter, default: #f3f2f1]";
+    }
+  }
+}
