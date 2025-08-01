@@ -877,38 +877,13 @@ const PopoverRenderer = React.memo(({ action, renderElement }: {
   renderElement: (elem: AdaptiveCardElement) => JSX.Element;
 }) => {
   const [open, setOpen] = useState(false);
-  const [position, setPosition] = useState({ top: 0, left: 0 });
   const buttonRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
 
-  // Calculate popover position relative to button
-  const calculatePosition = () => {
-    if (buttonRef.current) {
-      const buttonRect = buttonRef.current.getBoundingClientRect();
-      const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
-      const scrollLeft = window.pageXOffset || document.documentElement.scrollLeft;
-      
-      // Position below the button with some margin
-      const top = buttonRect.bottom + scrollTop + 8;
-      const left = buttonRect.left + scrollLeft;
-      
-      // Ensure popover doesn't go off-screen
-      const viewportWidth = window.innerWidth;
-      const popoverWidth = 350;
-      const adjustedLeft = Math.min(left, viewportWidth - popoverWidth - 20);
-      
-      setPosition({
-        top: top,
-        left: Math.max(10, adjustedLeft) // Minimum 10px from left edge
-      });
-    }
-  };
-
-  // Close popover when clicking outside
+  // Close popover when clicking outside or pressing escape
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
-      if (popoverRef.current && !popoverRef.current.contains(event.target as Node) &&
-          buttonRef.current && !buttonRef.current.contains(event.target as Node)) {
+      if (popoverRef.current && !popoverRef.current.contains(event.target as Node)) {
         setOpen(false);
       }
     };
@@ -919,31 +894,18 @@ const PopoverRenderer = React.memo(({ action, renderElement }: {
       }
     };
 
-    const handleScroll = () => {
-      if (open) {
-        calculatePosition();
-      }
-    };
-
-    const handleResize = () => {
-      if (open) {
-        calculatePosition();
-      }
-    };
-
     if (open) {
       document.addEventListener('mousedown', handleClickOutside);
       document.addEventListener('keydown', handleEscape);
-      window.addEventListener('scroll', handleScroll, true);
-      window.addEventListener('resize', handleResize);
-      calculatePosition();
+      // Prevent body scroll when modal is open
+      document.body.style.overflow = 'hidden';
     }
 
     return () => {
       document.removeEventListener('mousedown', handleClickOutside);
       document.removeEventListener('keydown', handleEscape);
-      window.removeEventListener('scroll', handleScroll, true);
-      window.removeEventListener('resize', handleResize);
+      // Restore body scroll when modal is closed
+      document.body.style.overflow = '';
     };
   }, [open]);
 
@@ -951,50 +913,143 @@ const PopoverRenderer = React.memo(({ action, renderElement }: {
     setOpen(!open);
   };
 
+  const handleCloseClick = () => {
+    setOpen(false);
+  };
+
   const popoverContent = open ? createPortal(
-    <div
-      ref={popoverRef}
-      style={{
-        position: 'absolute',
-        top: `${position.top}px`,
-        left: `${position.left}px`,
-        width: '400px',
-        maxWidth: '90vw',
-        padding: '16px',
-        backgroundColor: '#ffffff',
-        border: '1px solid #8a8886',
-        borderRadius: '4px',
-        boxShadow: '0 8px 24px rgba(0,0,0,0.15), 0 0 0 1px rgba(0,0,0,0.05)',
-        zIndex: 10000,
-        maxHeight: '400px',
-        overflowY: 'auto',
-        fontFamily: '"Segoe UI", system-ui, sans-serif',
-        animation: 'popoverFadeIn 0.15s ease-out forwards'
-      }}
-    >
-      <style>{`
-        @keyframes popoverFadeIn {
-          from {
-            opacity: 0;
-            transform: translateY(-8px) scale(0.95);
+    <>
+      {/* Modal Backdrop */}
+      <div
+        style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.4)',
+          zIndex: 9999,
+          animation: 'backdropFadeIn 0.2s ease-out forwards'
+        }}
+      />
+      {/* Modal Content */}
+      <div
+        ref={popoverRef}
+        style={{
+          position: 'fixed',
+          top: '50%',
+          left: '50%',
+          transform: 'translate(-50%, -50%)',
+          width: '80vw',
+          maxWidth: '800px',
+          minWidth: '400px',
+          maxHeight: '90vh',
+          backgroundColor: '#ffffff',
+          border: '1px solid #8a8886',
+          borderRadius: '8px',
+          boxShadow: '0 16px 48px rgba(0,0,0,0.25), 0 0 0 1px rgba(0,0,0,0.05)',
+          zIndex: 10000,
+          fontFamily: '"Segoe UI", system-ui, sans-serif',
+          animation: 'modalFadeIn 0.2s ease-out forwards',
+          display: 'flex',
+          flexDirection: 'column'
+        }}
+      >
+        <style>{`
+          @keyframes backdropFadeIn {
+            from {
+              opacity: 0;
+            }
+            to {
+              opacity: 1;
+            }
           }
-          to {
-            opacity: 1;
-            transform: translateY(0) scale(1);
+          @keyframes modalFadeIn {
+            from {
+              opacity: 0;
+              transform: translate(-50%, -50%) scale(0.9);
+            }
+            to {
+              opacity: 1;
+              transform: translate(-50%, -50%) scale(1);
+            }
           }
-        }
-      `}</style>
-      {action.content && renderElement(action.content)}
-      {!action.content && (
-        <div style={{ 
-          color: '#605e5c', 
-          fontStyle: 'italic',
-          fontFamily: '"Segoe UI", system-ui, sans-serif'
+        `}</style>
+        
+        {/* Header with Close Button */}
+        <div style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          padding: '16px 20px',
+          borderBottom: '1px solid #edebe9',
+          flexShrink: 0
         }}>
-          No content available for this popover
+          <h3 style={{
+            margin: 0,
+            fontSize: '18px',
+            fontWeight: '600',
+            color: '#323130',
+            fontFamily: '"Segoe UI", system-ui, sans-serif'
+          }}>
+            {action.title || 'Popover Content'}
+          </h3>
+          <button
+            onClick={handleCloseClick}
+            style={{
+              background: 'none',
+              border: 'none',
+              fontSize: '20px',
+              cursor: 'pointer',
+              color: '#605e5c',
+              padding: '4px',
+              borderRadius: '2px',
+              lineHeight: 1,
+              fontFamily: '"Segoe UI", system-ui, sans-serif',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              width: '32px',
+              height: '32px',
+              transition: 'all 0.2s ease'
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.backgroundColor = '#f3f2f1';
+              e.currentTarget.style.color = '#323130';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.backgroundColor = 'transparent';
+              e.currentTarget.style.color = '#605e5c';
+            }}
+            title="Close popover"
+            aria-label="Close popover"
+          >
+            ×
+          </button>
         </div>
-      )}
-    </div>,
+        
+        {/* Content Area */}
+        <div style={{
+          padding: '20px',
+          overflowY: 'auto',
+          flex: 1,
+          minHeight: 0 // Important for flex child to be scrollable
+        }}>
+          {action.content && renderElement(action.content)}
+          {!action.content && (
+            <div style={{ 
+              color: '#605e5c', 
+              fontStyle: 'italic',
+              fontFamily: '"Segoe UI", system-ui, sans-serif',
+              textAlign: 'center',
+              padding: '40px 0'
+            }}>
+              No content available for this popover
+            </div>
+          )}
+        </div>
+      </div>
+    </>,
     document.body
   ) : null;
 

@@ -31,7 +31,7 @@ export const CardComponent: React.FC<CardComponentProps> = ({ cardData }) => {
   
   useEffect(() => {
     if (!cardData.cardViewJSON) {
-      setContentType('empty');
+      // setContentType('empty');
       setIsLoading(false);
       return;
     }
@@ -123,7 +123,7 @@ export const CardComponent: React.FC<CardComponentProps> = ({ cardData }) => {
             const typedItem = item as { type: string; actions?: unknown[] };
             return typedItem.type === 'Table' || 
               typedItem.type === 'ImageSet' || 
-              /* typedItem.type === 'ColumnSet' ||  */
+              typedItem.type === 'ColumnSet' || 
               typedItem.type === 'Container' ||
               typedItem.type === 'Media' ||
               typedItem.type === 'FactSet' ||
