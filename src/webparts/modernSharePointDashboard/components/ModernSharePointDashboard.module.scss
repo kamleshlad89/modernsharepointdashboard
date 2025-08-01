@@ -9,18 +9,42 @@
   .headerBar {
     display: flex;
     justify-content: flex-end;
+    align-items: center;
     margin-bottom: 16px;
+    padding: 8px 0;
   }
 
   :global(.customizeButton) {
     margin-left: auto;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    transition: all 0.2s ease-in-out;
+
+    &:hover {
+      box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+      transform: translateY(-1px);
+    }
+
+    &:active {
+      transform: translateY(0);
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+    }
+
+    i {
+      font-size: 16px !important;
+      margin-right: 6px !important;
+    }
+
+    span {
+      font-weight: 600 !important;
+      letter-spacing: 0.3px;
+    }
   }
 
   .dashboardGrid {
     display: grid;
     grid-template-columns: repeat(4, 1fr);
     grid-template-rows: 1fr; // Single row as per requirements
-    gap: 16px;
+    gap: 10px;
     margin: 0 auto;
     max-width: 1500px;
     height: 500px; // Fixed height for the grid
@@ -59,13 +83,148 @@
 .customizePanel {
   padding: 16px;
 
-  .cardCustomizeItem {
-    margin-bottom: 16px;
-    padding: 8px;
+  .draggableCard {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px;
+    margin: 8px 0;
     border-radius: 2px;
+    position: relative;
+    transition: all 0.2s ease;
+    user-select: none;
+    background-color: #f8f8f8;
+    border: 1px solid #e0e0e0;
 
-    &:hover {
-      background-color: "[theme:neutralLighter, default: #f3f2f1]";
+    :global(.lockIcon) {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      color: #a19f9d;
+      font-size: 12px;
+    }
+
+    :global(.selectionStripe) {
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      width: 4px;
+      background-color: #0078d4;
+      border-radius: 2px 0 0 2px;
+    }
+
+    :global(.dragHandle) {
+      cursor: grab;
+      padding: 6px;
+      border-radius: 3px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 24px;
+      min-height: 24px;
+      background-color: #f3f2f1;
+      transition: all 0.2s ease;
+      border: 1px solid #d2d0ce;
+      touch-action: none;
+      user-select: none;
+
+      &:hover {
+        background-color: #edebe9;
+        border-color: #a19f9d;
+        transform: scale(1.05);
+      }
+
+      &:active {
+        cursor: grabbing;
+        transform: scale(0.95);
+        background-color: #e1dfdd;
+      }
+    }
+
+    :global(.gripperIcon) {
+      color: #605e5c;
+      font-size: 16px;
+      pointer-events: none;
+      font-weight: 600;
+    }
+
+    :global(.cardTitle) {
+      color: #605e5c;
+      flex: 1;
+      user-select: none;
+    }
+
+    :global(.dropIndicator) {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-color: rgba(0, 120, 212, 0.1);
+      border: 2px dashed #0078d4;
+      border-radius: 2px;
+      pointer-events: none;
+    }
+
+    // Selected state
+    &:global(.selected) {
+      background-color: #e6f7ff !important;
+      border-color: #91caff !important;
+
+      :global(.cardTitle) {
+        color: #0078d4 !important;
+        font-weight: 600 !important;
+      }
+
+      :global(.gripperIcon) {
+        color: #0078d4 !important;
+      }
+
+      :global(.dragHandle):hover {
+        background-color: #d6ebff !important;
+        border-color: #0078d4 !important;
+      }
+    }
+
+    // Fixed state
+    &:global(.fixed) {
+      background-color: #faf9f8 !important;
+      border-color: #d2d0ce !important;
+
+      :global(.cardTitle) {
+        color: #a19f9d !important;
+      }
+
+      &:global(.selected) {
+        background-color: #f0f8ff !important;
+        border-color: #b3d9ff !important;
+
+        :global(.cardTitle) {
+          color: #0066cc !important;
+        }
+
+        :global(.lockIcon) {
+          color: #0066cc !important;
+        }
+
+        :global(.selectionStripe) {
+          background-color: #0066cc !important;
+        }
+      }
+    }
+
+    // Dragging state
+    &:global(.isDragging) {
+      opacity: 0.5 !important;
+      transform: rotate(3deg) !important;
+    }
+
+    // Hover over state
+    &:global(.isOver) {
+      background-color: #deecf9 !important;
+      border-color: #0078d4 !important;
+      border-width: 2px !important;
     }
   }
 }

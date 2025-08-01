@@ -1,14 +1,23 @@
 import * as React from 'react';
 import { useState, useEffect } from 'react';
-import { AdaptiveCardRenderer } from './AdaptiveCardRenderer';
+import * as AdaptiveCards from 'adaptivecards';
+import { TooltipHost, TooltipDelay } from '@fluentui/react/lib/Tooltip';
 import { AdaptiveCardContentRenderer } from './AdaptiveCardContentRenderer';
-import { CustomChartRenderer } from './CustomChartRenderer';
 import styles from './ModernSharePointDashboard.module.scss';
 
 interface ICardData {
   id: number;
   title: string;
   cardViewJSON: string;
+  CardTooltip?: string;
+}
+
+interface IChartData {
+  title?: string;
+  data?: unknown[];
+  type?: string;
+  xAxisTitle?: string;
+  yAxisTitle?: string;
 }
 
 interface CardComponentProps {
@@ -18,7 +27,7 @@ interface CardComponentProps {
 export const CardComponent: React.FC<CardComponentProps> = ({ cardData }) => {
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [contentType, setContentType] = useState<'chart' | 'adaptiveCard' | 'adaptiveCardContent' | 'error' | 'empty'>('empty');
-  const [parsedChartData, setParsedChartData] = useState<any>(null);
+  const [parsedChartData, setParsedChartData] = useState<IChartData | null>(null);
   
   useEffect(() => {
     if (!cardData.cardViewJSON) {
@@ -45,26 +54,41 @@ export const CardComponent: React.FC<CardComponentProps> = ({ cardData }) => {
       // Check if it's an Adaptive Card with embedded Chart element
       else if (json.body && Array.isArray(json.body)) {
         // Look for Chart elements within the Adaptive Card body
-        const findChartElement = (items: any[]): any => {
+        const findChartElement = (items: unknown[]): unknown => {
           for (const item of items) {
             // Check for Chart element (either type: "Chart" or type starting with "Chart.")
-            if (item.type === 'Chart' || (item.type && typeof item.type === 'string' && item.type.startsWith('Chart.'))) {
-              return item;
+            if (typeof item === 'object' && item !== null && 'type' in item) {
+              const typedItem = item as { type: string; [key: string]: unknown };
+              if (typedItem.type === 'Chart' || (typedItem.type && typeof typedItem.type === 'string' && typedItem.type.startsWith('Chart.'))) {
+                return typedItem;
+              }
             }
             // Recursively search in nested structures
-            if (item.items && Array.isArray(item.items)) {
-              const found = findChartElement(item.items);
-              if (found) return found;
+            if (typeof item === 'object' && item !== null && 'items' in item) {
+              const itemWithItems = item as { items: unknown };
+              if (Array.isArray(itemWithItems.items)) {
+                const found = findChartElement(itemWithItems.items);
+                if (found) return found;
+              }
             }
-            if (item.body && Array.isArray(item.body)) {
-              const found = findChartElement(item.body);
-              if (found) return found;
+            if (typeof item === 'object' && item !== null && 'body' in item) {
+              const itemWithBody = item as { body: unknown };
+              if (Array.isArray(itemWithBody.body)) {
+                const found = findChartElement(itemWithBody.body);
+                if (found) return found;
+              }
             }
-            if (item.columns && Array.isArray(item.columns)) {
-              for (const column of item.columns) {
-                if (column.items && Array.isArray(column.items)) {
-                  const found = findChartElement(column.items);
-                  if (found) return found;
+            if (typeof item === 'object' && item !== null && 'columns' in item) {
+              const itemWithColumns = item as { columns: unknown };
+              if (Array.isArray(itemWithColumns.columns)) {
+                for (const column of itemWithColumns.columns) {
+                  if (typeof column === 'object' && column !== null && 'items' in column) {
+                    const columnWithItems = column as { items: unknown };
+                    if (Array.isArray(columnWithItems.items)) {
+                      const found = findChartElement(columnWithItems.items);
+                      if (found) return found;
+                    }
+                  }
                 }
               }
             }
@@ -74,32 +98,44 @@ export const CardComponent: React.FC<CardComponentProps> = ({ cardData }) => {
 
         const chartElement = findChartElement(json.body);
         if (chartElement) {
+          const typedChartElement = chartElement as { 
+            type?: string; 
+            chartType?: string; 
+            title?: string; 
+            data?: unknown[]; 
+            xAxisTitle?: string; 
+            yAxisTitle?: string; 
+          };
           setContentType('chart');
           setParsedChartData({
-            type: chartElement.type || chartElement.chartType || 'Chart.Bar', // Use the Chart.Donut type directly
-            title: chartElement.title || cardData.title || '',
-            data: chartElement.data || [],
-            xAxisTitle: chartElement.xAxisTitle || '',
-            yAxisTitle: chartElement.yAxisTitle || ''
+            type: typedChartElement.type || typedChartElement.chartType || 'Chart.Bar', // Use the Chart.Donut type directly
+            title: typedChartElement.title || cardData.title || '',
+            data: typedChartElement.data || [],
+            xAxisTitle: typedChartElement.xAxisTitle || '',
+            yAxisTitle: typedChartElement.yAxisTitle || ''
           });
         } else {
           // Check if it contains tables, images, or other complex elements
-          const hasComplexElements = json.body.some((item: any) => 
-            item.type === 'Table' || 
-            item.type === 'ImageSet' || 
-            item.type === 'ColumnSet' || 
-            item.type === 'Container' ||
-            item.type === 'Media' ||
-            item.type === 'FactSet' ||
-            item.type === 'RichTextBlock' ||
-            item.type === 'Input.Text' ||
-            item.type === 'Input.Number' ||
-            item.type === 'Input.Date' ||
-            item.type === 'Input.Time' ||
-            item.type === 'Input.Toggle' ||
-            item.type === 'Input.ChoiceSet' ||
-            (item.type === 'ActionSet' && item.actions?.length > 0)
-          );
+          const hasComplexElements = json.body.some((item: unknown) => {
+            if (typeof item !== 'object' || item === null || !('type' in item)) {
+              return false;
+            }
+            const typedItem = item as { type: string; actions?: unknown[] };
+            return typedItem.type === 'Table' || 
+              typedItem.type === 'ImageSet' || 
+              /* typedItem.type === 'ColumnSet' ||  */
+              typedItem.type === 'Container' ||
+              typedItem.type === 'Media' ||
+              typedItem.type === 'FactSet' ||
+              typedItem.type === 'RichTextBlock' ||
+              typedItem.type === 'Input.Text' ||
+              typedItem.type === 'Input.Number' ||
+              typedItem.type === 'Input.Date' ||
+              typedItem.type === 'Input.Time' ||
+              typedItem.type === 'Input.Toggle' ||
+              typedItem.type === 'Input.ChoiceSet' ||
+              (typedItem.type === 'ActionSet' && Array.isArray(typedItem.actions) && typedItem.actions.length > 0);
+          });
           
           if (hasComplexElements || json.type === 'AdaptiveCard' || json.version) {
             // Use the comprehensive renderer for complex Adaptive Cards
@@ -126,10 +162,11 @@ export const CardComponent: React.FC<CardComponentProps> = ({ cardData }) => {
     setIsLoading(false);
   }, [cardData.cardViewJSON, cardData.title]);
 
-  const handleActionExecute = (action: any): void => {
+  const handleActionExecute = (action: AdaptiveCards.Action): void => {
     // Handle custom actions here (e.g., button clicks, submit actions)
   };
 
+  // Render the card content based on the content type
   const renderCardContent = (): JSX.Element => {
     // Show loading state
     if (isLoading) {
@@ -158,16 +195,14 @@ export const CardComponent: React.FC<CardComponentProps> = ({ cardData }) => {
       );
     }
 
-    // Render chart using CustomChartRenderer with parsed data from CardViewJSON
+    // Render chart using unified AdaptiveCardContentRenderer
     if (contentType === 'chart' && parsedChartData) {
       return (
         <div style={{ height: '100%', minHeight: '300px', padding: '16px' }}>
-          <CustomChartRenderer
-            title={parsedChartData.title}
-            data={parsedChartData.data}
-            type={parsedChartData.type}
-            xAxisTitle={parsedChartData.xAxisTitle}
-            yAxisTitle={parsedChartData.yAxisTitle}
+          <AdaptiveCardContentRenderer
+            cardJson={cardData.cardViewJSON}
+            onActionExecute={handleActionExecute}
+            useNativeRenderer={false}
           />
         </div>
       );
@@ -189,9 +224,10 @@ export const CardComponent: React.FC<CardComponentProps> = ({ cardData }) => {
     if (contentType === 'adaptiveCard') {
       return (
         <div style={{ height: '100%', width: '100%' }}>
-          <AdaptiveCardRenderer
+          <AdaptiveCardContentRenderer
             cardJson={cardData.cardViewJSON}
             onActionExecute={handleActionExecute}
+            useNativeRenderer={true}
           />
         </div>
       );
@@ -206,19 +242,31 @@ export const CardComponent: React.FC<CardComponentProps> = ({ cardData }) => {
   };
 
   return (
-    <div className={styles.cardContainer}>
-      {renderCardContent()}
-      {/* <div style={{
-        height: '100%',
-        border: '1px solid #edebe9',
-        borderRadius: '2px',
-        backgroundColor: '#ffffff',
-        overflow: 'auto',
-        boxShadow: '0 1.6px 3.6px 0 rgba(0,0,0,0.132), 0 0.3px 0.9px 0 rgba(0,0,0,0.108)'
-      }}>
-        
-      </div> */}
-    </div>
+    <TooltipHost 
+      content={cardData.CardTooltip || cardData.title || 'Dashboard Card'}
+      delay={TooltipDelay.medium}
+      styles={{
+        root: { height: '100%', width: '100%' }
+      }}
+    >
+      <div 
+        className={styles.cardContainer}
+        style={{ 
+          cursor: 'pointer',
+          transition: 'transform 0.2s ease, box-shadow 0.2s ease'
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.transform = 'translateY(-2px)';
+          e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.15)';
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.transform = 'translateY(0)';
+          e.currentTarget.style.boxShadow = '';
+        }}
+      >
+        {renderCardContent()}
+      </div>
+    </TooltipHost>
   );
 };
 

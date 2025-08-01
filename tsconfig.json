@@ -6,7 +6,7 @@
     "module": "esnext",
     "moduleResolution": "node",
     "jsx": "react",
-    "declaration": true,
+    "declaration": true, 
     "sourceMap": true,
     "experimentalDecorators": true,
     "skipLibCheck": true,

@@ -8,13 +8,12 @@
   "requiresCustomScript": false,
   "supportedHosts": ["SharePointWebPart", "TeamsPersonalApp", "TeamsTab", "SharePointFullPage"],
   "supportsThemeVariants": true,
-
   "preconfiguredEntries": [{
     "groupId": "5c03119e-3074-46fd-976b-c60198311f70",
     "group": { "default": "Advanced" },
     "title": { "default": "Modern SharePoint Dashboard" },
-    "description": { "default": "Modern SharePoint Dashboard description" },
-    "officeFabricIconFontName": "Dashboard",
+    "description": { "default": "Modern SharePoint Dashboard WebPart to show Adaptive Cards" },
+    "officeFabricIconFontName": "ViewDashboard",
     "properties": {
       "description": "Modern SharePoint Dashboard"
     }

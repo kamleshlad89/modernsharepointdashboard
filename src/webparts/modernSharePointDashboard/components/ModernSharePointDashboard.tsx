@@ -1,15 +1,13 @@
 import * as React from 'react';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import styles from './ModernSharePointDashboard.module.scss';
 import type { IModernSharePointDashboardProps } from './IModernSharePointDashboardProps';
-import { CommandButton, PrimaryButton, DefaultButton } from '@fluentui/react/lib/Button';
+import { PrimaryButton, DefaultButton } from '@fluentui/react/lib/Button';
 import { Panel } from '@fluentui/react/lib/Panel';
 import { Checkbox } from '@fluentui/react/lib/Checkbox';
 import { Icon } from '@fluentui/react/lib/Icon';
 import { useBoolean } from '@fluentui/react-hooks';
-import { DndProvider } from 'react-dnd';
-import { HTML5Backend } from 'react-dnd-html5-backend';
-import { useDrag, useDrop } from 'react-dnd';
+import { DndContext, DragEndEvent, useDraggable, useDroppable, DragOverlay, DragStartEvent } from '@dnd-kit/core';
 import { SPHttpClient, SPHttpClientResponse } from '@microsoft/sp-http';
 import { CardComponent } from './CardComponent';
 
@@ -22,586 +20,673 @@ interface ICard {
   fixed: boolean;
   defaultOrder: number;
   cardViewJSON: string;
+  CardTooltip?: string;
 }
 
-interface ISharePointListItem {
+interface ISelectedCard {
+  id: number;
+  title: string;
+  order: number;
+}
+
+interface ISharePointCardItem {
   Id: number;
   Title: string;
-  Fixed: string;
+  Fixed: boolean; // SharePoint Yes/No (checkbox) column returns boolean
   DefaultOrder: number;
   CardViewJSON: string;
-  [key: string]: any;
+  CardTooltip?: string;
 }
 
-// Draggable Card Component for Customize Panel
+// Draggable Card Component for Customize Panel using @dnd-kit/core
 const DraggableCard: React.FC<{
   card: ICard;
   index: number;
-  moveCard: (dragIndex: number, hoverIndex: number) => void;
   onSelectionChange: (cardId: number, selected: boolean) => void;
   maxSelectionReached: boolean;
-}> = ({ card, index, moveCard, onSelectionChange, maxSelectionReached }) => {
-  const ref = React.useRef<HTMLDivElement>(null);
-
-  const [{ isDragging }, drag] = useDrag({
-    type: 'CARD',
-    item: () => ({ type: 'CARD', id: card.id, index }),
-    collect: (monitor) => ({
-      isDragging: monitor.isDragging(),
-    }),
-    canDrag: () => !card.fixed, // Prevent dragging fixed cards
-  });
-
-  const [, drop] = useDrop({
-    accept: 'CARD',
-    hover: (item: { type: string; id: number; index: number }, monitor) => {
-      if (!ref.current) {
-        return;
-      }
-      
-      const dragIndex = item.index;
-      const hoverIndex = index;
-      
-      // Don't replace items with themselves
-      if (dragIndex === hoverIndex) {
-        return;
-      }
-      
-      // Determine rectangle on screen
-      const hoverBoundingRect = ref.current?.getBoundingClientRect();
-      
-      // Get vertical middle
-      const hoverMiddleY = (hoverBoundingRect.bottom - hoverBoundingRect.top) / 2;
-      
-      // Determine mouse position
-      const clientOffset = monitor.getClientOffset();
-      
-      // Get pixels to the top
-      const hoverClientY = clientOffset!.y - hoverBoundingRect.top;
-      
-      // Only perform the move when the mouse has crossed half of the items height
-      // When dragging downwards, only move when the cursor is below 50%
-      // When dragging upwards, only move when the cursor is above 50%
-      
-      // Dragging downwards
-      if (dragIndex < hoverIndex && hoverClientY < hoverMiddleY) {
-        return;
-      }
-      
-      // Dragging upwards
-      if (dragIndex > hoverIndex && hoverClientY > hoverMiddleY) {
-        return;
-      }
-      
-      // Time to actually perform the action
-      moveCard(dragIndex, hoverIndex);
-      
-      // Note: we're mutating the monitor item here!
-      // Generally it's better to avoid mutations,
-      // but it's good here for the sake of performance
-      // to avoid expensive index searches.
-      item.index = hoverIndex;
+  requiredUserSelections: number;
+  isDragOverlay?: boolean;
+}> = ({ card, index, onSelectionChange, maxSelectionReached, requiredUserSelections, isDragOverlay = false }) => {
+  
+  // Only allow dragging for selected cards (not fixed and not available)
+  const canDrag = card.selected && !card.fixed;
+  
+  const {
+    attributes,
+    listeners,
+    setNodeRef: setDraggableRef,
+    transform,
+    isDragging,
+  } = useDraggable({
+    id: `card-${card.id}`,
+    data: {
+      card,
+      index,
     },
+    disabled: !canDrag,
   });
 
-  const handleCheckboxChange = (checked: boolean): void => {
-    onSelectionChange(card.id, checked);
+  const {
+    setNodeRef: setDroppableRef,
+    isOver,
+  } = useDroppable({
+    id: `droppable-${card.id}`,
+    data: {
+      card,
+      index,
+    },
+    disabled: !card.selected, // Only allow dropping on selected cards
+  });
+
+  const handleCheckboxChange = (ev: React.FormEvent<HTMLElement>, checked?: boolean): void => {
+    onSelectionChange(card.id, checked || false);
   };
 
-  // Connect drag and drop to the same element
-  drag(drop(ref));
+  const style = transform ? {
+    transform: `translate3d(${transform.x}px, ${transform.y}px, 0)`,
+  } : undefined;
 
   return (
     <div
-      ref={ref}
-      style={{
-        opacity: isDragging ? 0.5 : 1,
-        cursor: card.fixed ? 'not-allowed' : 'move',
-        padding: '12px',
-        margin: '8px 0',
-        backgroundColor: card.fixed ? '#faf9f8' : '#f3f2f1',
-        border: card.fixed ? '1px solid #d2d0ce' : '1px solid #edebe9',
-        borderRadius: '2px',
-        display: 'flex',
-        alignItems: 'center',
-        gap: '12px',
-        position: 'relative'
+      ref={(node) => {
+        setDraggableRef(node);
+        setDroppableRef(node);
       }}
+      style={{
+        ...style,
+        opacity: isDragOverlay ? 0.8 : isDragging ? 0.4 : 1,
+        cursor: canDrag ? 'move' : 'default',
+        userSelect: 'none',
+        transition: isDragging || isDragOverlay ? 'none' : 'all 0.2s ease',
+        transform: isDragging ? 'rotate(2deg) scale(1.05)' : isOver ? 'translateY(-2px)' : style?.transform || 'none',
+        boxShadow: isDragging || isDragOverlay ? '0 8px 16px rgba(0,0,0,0.3)' : 
+                   isOver ? '0 4px 12px rgba(0,120,212,0.4), inset 0 2px 0 #0078d4' : 
+                   '0 1px 3px rgba(0,0,0,0.1)',
+        borderColor: isOver ? '#0078d4' : undefined,
+        backgroundColor: isOver ? 'rgba(0,120,212,0.05)' : undefined,
+      }}
+      className={`${styles.draggableCard}${card.selected ? ' selected' : ''}${card.fixed ? ' fixed' : ''}${isDragging ? ' isDragging' : ''}${isOver ? ' isOver' : ''}`}
+      title={
+        card.fixed 
+          ? "This card is fixed and cannot be moved" 
+          : !card.selected 
+          ? "This card is not selected and cannot be moved"
+          : "Click and drag to reorder"
+      }
     >
-      {card.fixed && (
-        <Icon
-          iconName="Lock"
-          style={{
-            position: 'absolute',
-            top: '8px',
-            right: '8px',
-            color: '#a19f9d',
-            fontSize: '12px'
+      {card.fixed && <Icon iconName="Lock" className="lockIcon" />}
+      {card.selected && <div className="selectionStripe" />}
+      {canDrag && (
+        <div 
+          className="dragHandle" 
+          title="Drag handle - click and drag to reorder"
+          style={{ 
+            cursor: isDragging ? 'grabbing' : 'grab',
+            opacity: isDragging ? 0.7 : 1,
+            transform: isDragging ? 'scale(1.1)' : 'scale(1)',
+            transition: 'all 0.2s ease'
           }}
-        />
+          {...listeners}
+          {...attributes}
+        >
+          <Icon 
+            iconName="GripperDotsVertical" 
+            className="gripperIcon" 
+            styles={{
+              root: {
+                cursor: isDragging ? 'grabbing' : 'grab',
+                fontSize: '16px',
+                color: isDragging ? '#0078d4' : '#605e5c',
+                transition: 'color 0.2s ease'
+              }
+            }}
+            style={{ pointerEvents: 'none' }}
+          />
+        </div>
       )}
       <Checkbox
         checked={card.selected}
-        onChange={(ev, checked) => handleCheckboxChange(checked || false)}
+        onChange={handleCheckboxChange}
         disabled={card.fixed || (!card.selected && maxSelectionReached)}
-        title={card.fixed ? "This card is fixed and cannot be deselected" : undefined}
+        title={
+          card.fixed
+            ? "This card is fixed and cannot be deselected"
+            : !card.selected && maxSelectionReached
+            ? `Maximum ${requiredUserSelections} cards can be selected`
+            : undefined
+        }
       />
-      <span style={{ color: card.fixed ? '#a19f9d' : '#323130', paddingRight: card.fixed ? '20px' : '0' }}>
-        {card.title} {card.fixed}
-      </span>
+      <span className="cardTitle">{card.title}</span>
     </div>
   );
 };
 
 const ModernSharePointDashboard: React.FC<IModernSharePointDashboardProps> = (props) => {
   const [cards, setCards] = useState<ICard[]>([]);
+  const [originalCards, setOriginalCards] = useState<ICard[]>([]);
   const [isCustomizePanelOpen, { setTrue: openCustomizePanel, setFalse: dismissCustomizePanel }] = useBoolean(false);
+  const [searchText, setSearchText] = useState('');
+  const [activeCard, setActiveCard] = useState<ICard | null>(null);
 
-  const loadCardsFromSharePoint = async (): Promise<void> => {
-    try {
-      console.log('Loading cards from SharePoint MasterCardList...');
-      
-      // Make actual SharePoint REST API call
-      const response: SPHttpClientResponse = await props.context.spHttpClient.get(
-        `${props.context.pageContext.web.absoluteUrl}/_api/web/lists/getbytitle('MasterCardList')/items?$select=Id,Title,Fixed,DefaultOrder,CardViewJSON&$orderby=DefaultOrder`,
-        SPHttpClient.configurations.v1
-      );
-      
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-      
-      const data = await response.json();
-      const items: ISharePointListItem[] = data.value;
-      
-      // Transform SharePoint data to our card format
-      const cardsData: ICard[] = items.map((item: ISharePointListItem, index: number) => {
-        const isFixed = item.Fixed === 'Yes';
-        return {
-          id: item.Id,
-          title: item.Title,
-          // Fixed cards always use defaultOrder, non-fixed cards start with defaultOrder but can be changed
-          order: isFixed ? item.DefaultOrder || index + 1 : item.DefaultOrder || index + 1,
-          visible: isFixed ? true : index < 4, // Fixed cards are always visible, others default to first 4
-          selected: isFixed ? true : index < 4, // Fixed cards are always selected, others follow default logic
-          fixed: isFixed,
-          defaultOrder: item.DefaultOrder || index + 1,
-          cardViewJSON: item.CardViewJSON || ''
-        };
-      });
-      
-      // Sort cards by their DefaultOrder for initial display
-      const sortedCards = cardsData.sort((a, b) => a.defaultOrder - b.defaultOrder);
-      
-      // Load user settings and apply them
-      await loadUserSettings(sortedCards);
-      
-    } catch (error) {
-      console.error('Failed to load cards from SharePoint:', error);
-      // Fallback to empty array if SharePoint call fails
-      setCards([]);
+  // Handle drag start for @dnd-kit
+  const handleDragStart = (event: DragStartEvent) => {
+    const cardData = event.active.data.current;
+    if (cardData?.card) {
+      setActiveCard(cardData.card);
     }
   };
 
-  const loadUserSettings = async (initialCards: ICard[]): Promise<void> => {
+  // Handle drag end for @dnd-kit
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    setActiveCard(null);
+
+    if (!over || active.id === over.id) {
+      return;
+    }
+
+    const activeData = active.data.current;
+    const overData = over.data.current;
+
+    if (!activeData?.card || !overData?.card) {
+      return;
+    }
+
+    const activeCard = activeData.card as ICard;
+    const overCard = overData.card as ICard;
+
+    // Only allow reordering among selected cards
+    if (!activeCard.selected || !overCard.selected) {
+      return;
+    }
+
+    setCards((prevCards) => {
+      const activeIndex = prevCards.findIndex(card => card.id === activeCard.id);
+      const overIndex = prevCards.findIndex(card => card.id === overCard.id);
+
+      if (activeIndex === -1 || overIndex === -1) {
+        return prevCards;
+      }
+
+      const newCards = [...prevCards];
+      const [movedCard] = newCards.splice(activeIndex, 1);
+      newCards.splice(overIndex, 0, movedCard);
+
+      // Update the order based on new positions
+      const updatedCards = newCards.map((card, index) => ({
+        ...card,
+        order: index + 1
+      }));
+
+      console.log(`🔄 Moved card "${activeCard.title}" from position ${activeIndex} to ${overIndex}`);
+      return updatedCards;
+    });
+  };
+
+  const loadUserSettings = useCallback(async (initialCards: ICard[]): Promise<void> => {
     try {
       const currentUser = props.context.pageContext.user;
       const userPrincipalName = currentUser.loginName;
-      
-      const existingSettingsResponse = await props.context.spHttpClient.get(
+
+      console.log('Loading user settings for:', userPrincipalName);
+      console.log('Initial cards from SharePoint:', initialCards.map(c => ({ id: c.id, title: c.title, fixed: c.fixed })));
+
+      const response = await props.context.spHttpClient.get(
         `${props.context.pageContext.site.absoluteUrl}/_api/web/lists/getbytitle('UserSettingsList')/items?$filter=UserID eq '${userPrincipalName}'&$top=1`,
         SPHttpClient.configurations.v1
       );
 
-      if (existingSettingsResponse.ok) {
-        const existingData = await existingSettingsResponse.json();
-        const existingItems = existingData.value || [];
-        
-        if (existingItems.length > 0) {
-          const userSettings = JSON.parse(existingItems[0].PersonalisedCards);
-          console.log('Loading user settings:', userSettings);
+      if (response.ok) {
+        const data = await response.json();
+        if (data.value && data.value.length > 0) {
+          const userSettings = JSON.parse(data.value[0].PersonalisedCards);
+          console.log('Found user settings:', userSettings);
           
-          // Apply user settings to cards
+          const userCardMap = new Map<number, ISelectedCard>(
+            userSettings.selectedCards.map((uc: ISelectedCard) => [uc.id, uc])
+          );
+
           const updatedCards = initialCards.map(card => {
-            // Always keep fixed cards with their original settings
             if (card.fixed) {
-              return {
-                ...card,
-                visible: true, // Fixed cards are always visible
-                selected: true, // Fixed cards are always selected
-                order: card.defaultOrder // Fixed cards always use defaultOrder
-              };
+              return { ...card, visible: true, selected: true };
             }
-            
-            // For non-fixed cards, check if user has customized them
-            const userCardSetting = userSettings.selectedCards?.find((uc: any) => uc.id === card.id);
-            if (userCardSetting) {
-              return {
-                ...card,
-                visible: true,
-                selected: true,
-                order: userCardSetting.order // Use user's custom order
-              };
-            }
-            
-            // If not in user settings, card is not selected
+            const userSetting = userCardMap.get(card.id);
             return {
               ...card,
-              visible: false,
-              selected: false
+              visible: !!userSetting,
+              selected: !!userSetting,
+              order: userSetting ? userSetting.order : card.order,
             };
           });
-          
+
+          console.log('Final cards after applying user settings:', updatedCards.map(c => ({ 
+            id: c.id, 
+            title: c.title, 
+            fixed: c.fixed, 
+            selected: c.selected, 
+            visible: c.visible 
+          })));
+
           setCards(updatedCards);
+          setOriginalCards([...updatedCards]);
           return;
         }
       }
     } catch (error) {
       console.log('No user settings found or error loading them:', error);
     }
+
+    // Default behavior when no user settings found
+    const defaultVisibleCards = initialCards.map((card, index) => ({
+      ...card,
+      visible: card.fixed || index < 4,
+      selected: card.fixed || index < 4,
+    }));
     
-    // If no user settings found, use initial cards
-    setCards(initialCards);
-  };
+    console.log('Using default card visibility:', defaultVisibleCards.map(c => ({ 
+      id: c.id, 
+      title: c.title, 
+      fixed: c.fixed, 
+      selected: c.selected, 
+      visible: c.visible 
+    })));
+    
+    setCards(defaultVisibleCards);
+    setOriginalCards([...defaultVisibleCards]);
+  }, [props.context]);
+
+  const loadCardsFromSharePoint = useCallback(async (): Promise<void> => {
+    try {
+      const response: SPHttpClientResponse = await props.context.spHttpClient.get(
+        `${props.context.pageContext.web.absoluteUrl}/_api/web/lists/getbytitle('MasterCardList')/items?$select=Id,Title,Fixed,DefaultOrder,CardViewJSON,CardTooltip&$orderby=DefaultOrder`,
+        SPHttpClient.configurations.v1
+      );
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const data = await response.json();
+      const items: ISharePointCardItem[] = data.value;
+
+      const cardsData: ICard[] = items.map((item, index) => {
+        // Handle Fixed field - SharePoint Yes/No column returns boolean directly
+        const isFixed = item.Fixed === true;
+        
+        console.log(`Card "${item.Title}": Fixed field value = ${item.Fixed} (type: ${typeof item.Fixed}), isFixed = ${isFixed}`);
+        
+        return {
+          id: item.Id,
+          title: item.Title,
+          order: item.DefaultOrder || index + 1,
+          visible: isFixed,
+          selected: isFixed,
+          fixed: isFixed,
+          defaultOrder: item.DefaultOrder || index + 1,
+          cardViewJSON: item.CardViewJSON || '',
+          CardTooltip: item.CardTooltip || ''
+        };
+      });
+
+      await loadUserSettings(cardsData);
+    } catch (error) {
+      console.error('Failed to load cards from SharePoint:', error);
+      setCards([]);
+    }
+  }, [props.context]);
 
   useEffect(() => {
-    void loadCardsFromSharePoint();
-  }, []);
-
-  const moveCard = (dragIndex: number, hoverIndex: number): void => {
-    const dragCard = cards[dragIndex];
-    
-    // Prevent moving fixed cards
-    if (dragCard.fixed) {
-      return;
-    }
-    
-    // Get the current sorted order of cards (how they appear in the panel)
-    const sortedCards = [...cards].sort((a, b) => {
-      const aOrder = a.fixed ? a.defaultOrder : a.order;
-      const bOrder = b.fixed ? b.defaultOrder : b.order;
-      return aOrder - bOrder;
-    });
-    
-    // Find the target position in the sorted array
-    const targetCard = sortedCards[hoverIndex];
-    let newOrder: number;
-    
-    if (targetCard) {
-      if (targetCard.fixed) {
-        // If hovering over a fixed card, place before or after it
-        if (dragIndex < hoverIndex) {
-          // Moving down: place after the fixed card
-          newOrder = targetCard.defaultOrder + 0.5;
-        } else {
-          // Moving up: place before the fixed card
-          newOrder = targetCard.defaultOrder - 0.5;
-        }
-      } else {
-        // If hovering over a non-fixed card, take its position
-        newOrder = hoverIndex + 1;
-      }
-    } else {
-      // If hovering at the end
-      newOrder = cards.length + 1;
-    }
-    
-    // Update only the dragged card's order, keep everything else unchanged
-    const newCards = cards.map(card => {
-      if (card.id === dragCard.id) {
-        return { ...card, order: newOrder };
-      }
-      // Keep all other cards (including fixed cards) exactly as they are
-      return card;
-    });
-    
-    setCards(newCards);
-  };
+    loadCardsFromSharePoint().catch(console.error);
+  }, [loadCardsFromSharePoint]);
 
   const handleSelectionChange = (cardId: number, selected: boolean): void => {
-    const newCards = cards.map(card => {
-      if (card.id === cardId && !card.fixed) { // Only allow changes for non-fixed cards
-        return { ...card, selected };
+    setCards(currentCards => {
+      const newCards = currentCards.map(card => {
+        if (card.id === cardId && !card.fixed) {
+          return { ...card, selected };
+        }
+        return card;
+      });
+
+      const fixedCount = newCards.filter(c => c.fixed).length;
+      const requiredSelections = 4 - fixedCount;
+      const newSelectableCount = newCards.filter(c => !c.fixed && c.selected).length;
+
+      if (newSelectableCount > requiredSelections) {
+        return currentCards; // Abort change
       }
-      // Fixed cards always remain selected
-      if (card.fixed) {
-        return { ...card, selected: true };
-      }
-      return card;
+      return newCards;
     });
-    setCards(newCards);
   };
 
-  const selectedCount = cards.filter(card => card.selected).length;
-  const fixedCount = cards.filter(card => card.fixed).length;
-  const selectableCount = cards.filter(card => !card.fixed && card.selected).length;
-  const maxSelectableCards = 4 - fixedCount; // Reduce max selection by number of fixed cards
-  const maxSelectionReached = selectableCount >= maxSelectableCards;
+  const handleOpenCustomizePanel = (): void => {
+    setOriginalCards([...cards]);
+    openCustomizePanel();
+  };
+
+  const handleCancel = (): void => {
+    setCards([...originalCards]);
+    dismissCustomizePanel();
+  };
 
   const handleSave = async (): Promise<void> => {
-    // Update visibility based on selection, but ensure fixed cards are always visible
     const updatedCards = cards.map(card => ({
       ...card,
-      visible: card.fixed ? true : card.selected // Fixed cards always visible, others based on selection
+      visible: card.selected,
     }));
-    setCards(updatedCards);
 
-    // Validate that we don't exceed the 4-card limit
-    const visibleCards = updatedCards.filter(card => card.visible);
-    const fixedVisibleCards = visibleCards.filter(card => card.fixed);
-    const nonFixedVisibleCards = visibleCards.filter(card => !card.fixed);
-    
-    if (fixedVisibleCards.length + nonFixedVisibleCards.length > 4) {
-      alert(`You can only select ${4 - fixedVisibleCards.length} additional cards because ${fixedVisibleCards.length} card(s) are fixed.`);
+    const visibleCount = updatedCards.filter(c => c.visible).length;
+    if (visibleCount > 4) {
+      alert(`You can only select up to 4 cards.`);
       return;
     }
 
+    setCards(updatedCards);
+
     try {
-      // Get selected cards in order based on user's arrangement (not defaultOrder)
-      // Fixed cards should always use their defaultOrder, non-fixed cards use current order
-      const selectedCards = cards
-        .filter(card => card.selected)
-        .sort((a, b) => {
-          const aOrder = a.fixed ? a.defaultOrder : a.order;
-          const bOrder = b.fixed ? b.defaultOrder : b.order;
-          return aOrder - bOrder;
-        })
-        .map((card, index) => ({
-          id: card.id,
-          title: card.title,
-          order: card.fixed ? card.defaultOrder : card.order, // Fixed cards use defaultOrder, others use current order
-          originalDefaultOrder: card.defaultOrder, // Keep reference to original order
-          isFixed: card.fixed
+      const selectedCardsForSaving = updatedCards
+        .filter(c => c.selected)
+        .map((c, index) => ({
+          id: c.id,
+          title: c.title,
+          order: index + 1, // Assign new order based on final position
         }));
 
-      // Create JSON schema with user settings
       const userSettingsJSON = {
         timestamp: new Date().toISOString(),
-        selectedCards: selectedCards,
-        totalSelected: selectedCards.length
-       /*  cardDetails: selectedCards.map((card, index) => ({
-          cardId: card.id,
-          cardTitle: card.title,
-          userDefinedOrder: card.order, // User's custom order (1, 2, 3, 4)
-          originalDefaultOrder: card.originalDefaultOrder, // Original order from MasterCardList
-          isFixed: card.isFixed,
-          gridPosition: index + 1 // Final position in the grid (1-4)
-        })) */
+        selectedCards: selectedCardsForSaving,
       };
 
-      // Get current user information
       const currentUser = props.context.pageContext.user;
       const userPrincipalName = currentUser.loginName;
       const userName = currentUser.displayName;
 
-      // Check if UserSettingsList exists and if user settings already exist
-      let existingItems: any[] = [];
-      let listExists = true;
-      
-      try {
-        const existingSettingsResponse = await props.context.spHttpClient.get(
-          `${props.context.pageContext.site.absoluteUrl}/_api/web/lists/getbytitle('UserSettingsList')/items?$filter=UserID eq '${userPrincipalName}'&$top=1`,
-          SPHttpClient.configurations.v1
-        );
+      const listName = 'UserSettingsList';
+      const siteUrl = props.context.pageContext.site.absoluteUrl;
+      const apiUrl = `${siteUrl}/_api/web/lists/getbytitle('${listName}')/items`;
 
-        if (existingSettingsResponse.ok) {
-          const existingData = await existingSettingsResponse.json();
-          existingItems = existingData.value || [];
-        } else {
-          console.log('UserSettingsList might not exist or is empty');
-          listExists = false;
-        }
-      } catch (listError) {
-        console.log('Error accessing UserSettingsList, it might not exist:', listError);
-        listExists = false;
-      }
+      const getResponse = await props.context.spHttpClient.get(
+        `${apiUrl}?$filter=UserID eq '${userPrincipalName}'&$top=1`,
+        SPHttpClient.configurations.v1
+      );
 
-      // Prepare the item data
       const itemData = {
-        '__metadata': { 'type': 'SP.Data.UserSettingsListListItem' },
-        'Title': userName,
-        'UserID': userPrincipalName,
-        'PersonalisedCards': JSON.stringify(userSettingsJSON)
+        Title: userName,
+        UserID: userPrincipalName,
+        PersonalisedCards: JSON.stringify(userSettingsJSON),
       };
 
-      if (listExists && existingItems.length > 0) {
-        // Update existing user settings
-        const existingItem = existingItems[0];
-        await props.context.spHttpClient.post(
-          `${props.context.pageContext.site.absoluteUrl}/_api/web/lists/getbytitle('UserSettingsList')/items(${existingItem.Id})`,
-          SPHttpClient.configurations.v1,
-          {
-            headers: {
-              'Accept': 'application/json;odata=nometadata',
-              'Content-type': 'application/json;odata=verbose',
-              'odata-version': '',
-              'IF-MATCH': '*',
-              'X-HTTP-Method': 'MERGE'
-            },
-            body: JSON.stringify(itemData)
-          }
-        );
-        console.log('User settings updated successfully for:', userName);
-      } else {
-        // Create new user settings (first time or list is empty)
-        try {
-          const response = await props.context.spHttpClient.post(
-            `${props.context.pageContext.site.absoluteUrl}/_api/web/lists/getbytitle('UserSettingsList')/items`,
+      if (getResponse.ok) {
+        const data = await getResponse.json();
+        if (data.value && data.value.length > 0) {
+          const existingItemId = data.value[0].Id;
+          await props.context.spHttpClient.post(
+            `${apiUrl}(${existingItemId})`,
             SPHttpClient.configurations.v1,
             {
-              headers: {
-                'Accept': 'application/json;odata=nometadata',
-                'Content-type': 'application/json;odata=verbose',
-                'odata-version': ''
-              },
-              body: JSON.stringify(itemData)
+              headers: { 'X-HTTP-Method': 'MERGE', 'IF-MATCH': '*' },
+              body: JSON.stringify(itemData),
             }
           );
-          
-          if (response.ok) {
-            console.log('User settings created successfully for first-time user:', userName);
-            console.log('Data saved:', itemData);
-          } else {
-            const errorText = await response.text();
-            console.error('Failed to create user settings. Response:', response.status, errorText);
-            throw new Error(`HTTP ${response.status}: ${errorText}`);
-          }
-        } catch (createError) {
-          console.error('Error creating user settings. List might not exist:', createError);
-          
-          // Try to provide helpful error information
-          if (createError.message?.includes('404')) {
-            console.error('UserSettingsList does not exist. Please create the list with the following columns:');
-            console.error('- Title (Single line of text) - for user display name');
-            console.error('- UserID (Single line of text) - for user principal name');
-            console.error('- PersonalisedCards (Multiple lines of text) - for JSON data');
-          }
-          
-          // Don't throw the error, just log it so the UI doesn't break
-          alert('Settings could not be saved. Please contact your administrator to set up the UserSettingsList with columns: Title, UserID, and PersonalisedCards.');
+        } else {
+          await props.context.spHttpClient.post(apiUrl, SPHttpClient.configurations.v1, {
+            body: JSON.stringify(itemData),
+          });
         }
       }
-
-      console.log('User settings JSON prepared:', userSettingsJSON);
-      console.log('User information:', { userName, userPrincipalName });
+      console.log('User settings saved successfully.');
     } catch (error) {
-      console.error('Failed to save user settings to SharePoint:', error);
-      
-      // Provide user-friendly error message
-      alert('There was an error saving your settings. Please try again or contact your administrator.');
+      console.error('Failed to save user settings:', error);
+      alert('There was an error saving your settings.');
     }
 
     dismissCustomizePanel();
   };
 
+  const fixedCount = cards.filter(c => c.fixed).length;
+  const selectableCount = cards.filter(c => !c.fixed && c.selected).length;
+  const requiredUserSelections = 4 - fixedCount;
+  const hasCorrectSelections = selectableCount === requiredUserSelections;
+  const maxSelectionReached = selectableCount >= requiredUserSelections;
+
+  const renderDashboardGrid = (): JSX.Element[] => {
+    const visibleCards = cards.filter(c => c.visible);
+    const sortedCards = visibleCards.sort((a, b) => a.order - b.order);
+    const gridSlots: (ICard | null)[] = Array(4).fill(null);
+
+    const fixedCards = sortedCards.filter(c => c.fixed);
+    const nonFixedCards = sortedCards.filter(c => !c.fixed);
+
+    fixedCards.forEach(card => {
+      if (card.defaultOrder > 0 && card.defaultOrder <= 4) {
+        gridSlots[card.defaultOrder - 1] = card;
+      }
+    });
+
+    let nonFixedIndex = 0;
+    for (let i = 0; i < 4 && nonFixedIndex < nonFixedCards.length; i++) {
+      if (gridSlots[i] === null) {
+        gridSlots[i] = nonFixedCards[nonFixedIndex++];
+      }
+    }
+
+    return gridSlots
+      .filter(card => card !== null)
+      .map(card => (
+        <CardComponent
+          key={card!.id}
+          cardData={{
+            id: card!.id,
+            title: card!.title,
+            cardViewJSON: card!.cardViewJSON,
+            CardTooltip: card!.CardTooltip
+          }}
+        />
+      ));
+  };
+
   return (
-    <DndProvider backend={HTML5Backend}>
+    <DndContext onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
       <section className={styles.modernSharePointDashboard}>
         <div className={styles.headerBar}>
-          <CommandButton
-            iconProps={{ iconName: 'Customize' }}
-            text="Customize"
+          <PrimaryButton
+            iconProps={{ iconName: 'Settings' }}
+            text="Customize Dashboard"
             className="customizeButton"
-            onClick={openCustomizePanel}
+            onClick={handleOpenCustomizePanel}
           />
         </div>
-        
-        <div className={styles.dashboardGrid}>
-          {(() => {
-            // Get all visible cards
-            const visibleCards = cards.filter(card => card.visible);
-            
-            // Separate fixed and non-fixed cards
-            const fixedCards = visibleCards.filter(card => card.fixed);
-            const nonFixedCards = visibleCards.filter(card => !card.fixed);
-            
-            // Sort non-fixed cards by their custom order
-            const sortedNonFixedCards = nonFixedCards.sort((a, b) => a.order - b.order);
-            
-            // Create a 4-slot grid array
-            const gridSlots: (ICard | null)[] = [null, null, null, null];
-            
-            // First, place fixed cards in their designated positions
-            fixedCards.forEach(card => {
-              const slotIndex = card.defaultOrder - 1; // Convert to 0-based index
-              if (slotIndex >= 0 && slotIndex < 4) {
-                gridSlots[slotIndex] = card;
-              }
-            });
-            
-            // Then fill remaining slots with non-fixed cards
-            let nonFixedIndex = 0;
-            for (let i = 0; i < 4 && nonFixedIndex < sortedNonFixedCards.length; i++) {
-              if (gridSlots[i] === null) {
-                gridSlots[i] = sortedNonFixedCards[nonFixedIndex];
-                nonFixedIndex++;
-              }
-            }
-            
-            // Render only the cards that fit in the grid
-            return gridSlots
-              .filter(card => card !== null)
-              .map((card) => (
-                <CardComponent
-                  key={card!.id}
-                  cardData={{
-                    id: card!.id,
-                    title: card!.title,
-                    cardViewJSON: card!.cardViewJSON
-                  }}
-                />
-              ));
-          })()}
-        </div>
-
+        <div className={styles.dashboardGrid}>{renderDashboardGrid()}</div>
         <Panel
           isOpen={isCustomizePanelOpen}
-          onDismiss={dismissCustomizePanel}
+          onDismiss={handleCancel}
           headerText="Customize Dashboard"
           closeButtonAriaLabel="Close"
         >
           <div className={styles.customizePanel}>
             <div style={{ marginBottom: '16px', fontSize: '14px', color: '#605e5c' }}>
-              {fixedCount > 0 && (
-                <div style={{ fontSize: '12px', color: '#a19f9d', marginTop: '4px' }}>
-                  ({fixedCount} fixed card{fixedCount !== 1 ? 's' : ''}, {selectableCount}/{maxSelectableCards} selectable)
-                </div>
+              💡 Tip: Click and drag any card to reorder. Fixed cards (with lock icons) cannot be moved. Cards with blue backgrounds are selected.
+            </div>
+            
+            {/* Search Box */}
+            <div style={{ marginBottom: '16px', position: 'relative' }}>
+              <input
+                type="text"
+                placeholder="🔍 Search cards by name..."
+                value={searchText}
+                onChange={(e) => setSearchText(e.target.value)}
+                style={{
+                  width: '100%',
+                  padding: '8px 12px',
+                  paddingRight: searchText ? '40px' : '12px',
+                  border: '1px solid #8a8886',
+                  borderRadius: '4px',
+                  fontSize: '14px',
+                  fontFamily: '"Segoe UI", system-ui, sans-serif',
+                  boxSizing: 'border-box'
+                }}
+              />
+              {searchText && (
+                <button
+                  onClick={() => setSearchText('')}
+                  style={{
+                    position: 'absolute',
+                    right: '8px',
+                    top: '50%',
+                    transform: 'translateY(-50%)',
+                    background: 'none',
+                    border: 'none',
+                    cursor: 'pointer',
+                    color: '#605e5c',
+                    fontSize: '16px',
+                    padding: '4px'
+                  }}
+                  title="Clear search"
+                >
+                  ✕
+                </button>
               )}
             </div>
             
-            {cards
-              .sort((a, b) => {
-                // Sort cards by their display order (fixed cards use defaultOrder, others use current order)
-                const aOrder = a.fixed ? a.defaultOrder : a.order;
-                const bOrder = b.fixed ? b.defaultOrder : b.order;
-                return aOrder - bOrder;
-              })
-              .map((card, index) => (
-              <DraggableCard
-                key={card.id}
-                card={card}
-                index={index}
-                moveCard={moveCard}
-                onSelectionChange={handleSelectionChange}
-                maxSelectionReached={maxSelectionReached}
-              />
-            ))}
+            {/* Selected Cards Section */}
+            {(() => {
+              // Filter cards by search text first
+              const filteredCards = cards.filter(card => 
+                card.title.toLowerCase().includes(searchText.toLowerCase())
+              );
+
+              // Separate filtered cards into categories
+              const userSelectedCards = filteredCards
+                .filter(card => card.selected && !card.fixed)
+                .sort((a, b) => a.order - b.order);
+
+              const fixedCards = filteredCards
+                .filter(card => card.selected && card.fixed)
+                .sort((a, b) => a.defaultOrder - b.defaultOrder);
+
+              const unselectedCards = filteredCards
+                .filter(card => !card.selected)
+                .sort((a, b) => a.defaultOrder - b.defaultOrder);
+
+              // Combine arrays: user-selected first, then fixed, then unselected
+              const sortedCards = [...userSelectedCards, ...fixedCards, ...unselectedCards];
+
+              // Check if we have any results
+              const hasResults = sortedCards.length > 0;
+              const isSearching = searchText.trim() !== '';
+
+              return (
+                <>
+                  {isSearching && !hasResults && (
+                    <div style={{ 
+                      padding: '16px', 
+                      textAlign: 'center', 
+                      color: '#605e5c',
+                      backgroundColor: '#f3f2f1',
+                      border: '1px solid #edebe9',
+                      borderRadius: '4px',
+                      marginBottom: '12px'
+                    }}>
+                      No cards found matching &quot;{searchText}&quot;
+                    </div>
+                  )}
+
+                  {userSelectedCards.length > 0 && (
+                    <div style={{ marginBottom: '12px' }}>
+                      <div style={{ 
+                        fontSize: '13px', 
+                        fontWeight: '600', 
+                        color: '#0078d4', 
+                        marginBottom: '8px',
+                        borderBottom: '1px solid #edebe9',
+                        paddingBottom: '4px'
+                      }}>
+                        User Selected Cards ({userSelectedCards.length})
+                      </div>
+                      {userSelectedCards.map((card, index) => (
+                        <DraggableCard
+                          key={card.id}
+                          card={card}
+                          index={sortedCards.findIndex(c => c.id === card.id)}
+                          onSelectionChange={handleSelectionChange}
+                          maxSelectionReached={maxSelectionReached}
+                          requiredUserSelections={requiredUserSelections}
+                        />
+                      ))}
+                    </div>
+                  )}
+
+                  {fixedCards.length > 0 && (
+                    <div style={{ marginBottom: '12px' }}>
+                      <div style={{ 
+                        fontSize: '13px', 
+                        fontWeight: '600', 
+                        color: '#107c10', 
+                        marginBottom: '8px',
+                        borderBottom: '1px solid #edebe9',
+                        paddingBottom: '4px'
+                      }}>
+                        Fixed Cards ({fixedCards.length})
+                      </div>
+                      {fixedCards.map((card, index) => (
+                        <DraggableCard
+                          key={card.id}
+                          card={card}
+                          index={sortedCards.findIndex(c => c.id === card.id)}
+                          onSelectionChange={handleSelectionChange}
+                          maxSelectionReached={maxSelectionReached}
+                          requiredUserSelections={requiredUserSelections}
+                        />
+                      ))}
+                    </div>
+                  )}
+
+                  {unselectedCards.length > 0 && (
+                    <div style={{ marginBottom: '12px' }}>
+                      <div style={{ 
+                        fontSize: '13px', 
+                        fontWeight: '600', 
+                        color: '#605e5c', 
+                        marginBottom: '8px',
+                        borderBottom: '1px solid #edebe9',
+                        paddingBottom: '4px'
+                      }}>
+                        Available Cards ({unselectedCards.length})
+                      </div>
+                      {unselectedCards.map((card, index) => (
+                        <DraggableCard
+                          key={card.id}
+                          card={card}
+                          index={sortedCards.findIndex(c => c.id === card.id)}
+                          onSelectionChange={handleSelectionChange}
+                          maxSelectionReached={maxSelectionReached}
+                          requiredUserSelections={requiredUserSelections}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </>
+              );
+            })()}
             
+            <div style={{ marginTop: '16px', padding: '8px 12px', backgroundColor: '#f3f2f1', borderRadius: '4px' }}>
+              <div style={{ fontSize: '12px', color: '#605e5c', fontWeight: '600' }}>
+                Selection Status: {fixedCount} fixed, {selectableCount}/{requiredUserSelections} selectable selected.
+              </div>
+            </div>
             <div style={{ marginTop: '20px', display: 'flex', gap: '12px' }}>
               <PrimaryButton
                 text="Save"
                 onClick={handleSave}
-                disabled={selectedCount > 4 || selectedCount < fixedCount}
+                disabled={!hasCorrectSelections}
+                title={!hasCorrectSelections ? `Please select exactly ${requiredUserSelections} more card(s).` : ''}
               />
-              <DefaultButton
-                text="Cancel"
-                onClick={dismissCustomizePanel}
-              />
+              <DefaultButton text="Cancel" onClick={handleCancel} />
             </div>
           </div>
         </Panel>
       </section>
-    </DndProvider>
+    </DndContext>
   );
 };
 
